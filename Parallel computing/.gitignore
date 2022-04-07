@@ -3,3 +3,4 @@
 .vscode
 .gitignore
 /Птуха
+*/*.DS_Store
