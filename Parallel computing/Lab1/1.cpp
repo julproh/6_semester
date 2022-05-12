@@ -3,6 +3,7 @@
 #include<mpi.h>
 #include <iomanip>
 #include<vector>
+#include<fstream>
 
 using namespace std;
 
@@ -13,7 +14,6 @@ using namespace std;
 int M = SIZE_X; // по х
 int K = SIZE_T; // по t
 
-//будем рассматривать линейный случай
 double tau = 0.01;
 double h = 0.01;
 
@@ -22,45 +22,50 @@ double phi(double x) {
 }
 
 double ksi(double t) {
-	return t;
+	return 2*t;
 }
 
 double f(double t, double x) {
-	return 0;
+	return 2*t*x+t*t;
 }
 
-//Решение крестом
+// Решение крестом
 double solve(double left, double right, double bottom, double f) {
 	return bottom + 2 * tau * (f + (left - right) / (2 * h));
 }
 
-//Решение явной центральной трехточечной схемой на нижней границе
+// Решение явной центральной трехточечной схемой на нижней границе
 double solve_bottom(double left, double right, double f) {
 	return 0.5 * (left + right) + tau * (f + (left - right) / (2 * h));
 }
 
-//Решение уголком на правой границе
+// Решение уголком на правой границе
 double solve_right(double left, double central, double f) {
 	return central + tau * (f + (left - central) / h);
 }
 
-//отправкка данных
+// Отправкка данных
 void data_send(double** data, MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k);
 
-//прием данных
-pair<double, double> data_recive(double** data, MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k);
+// Прием данных
+pair<double, double> data_recive(MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k);
 
-//выделение памяти под матрицу
+// Выделение памяти под матрицу
 template <typename T>
 T** new_matrix(int height, int width) {
 	T** matrix = new T * [height];
 	for (int i = 0; i < height; ++i) {
 		matrix[i] = new T[width];
 	}
+	for (int iy = 0; iy < height; ++iy) {
+			for (int ix = 0; ix < width; ++ix) {
+				matrix[iy][ix] = 0;
+			}
+		}
 	return matrix;
 }
 
-//удаление матрицы
+// Удаление матрицы
 template <typename T>
 void delete_matrix(T** matrix, int height) {
 	for (int i = 0; i < height; ++i) {
@@ -94,13 +99,13 @@ int main(int argc, char* argv[]) {
 		cout << "From process " << ProcRank << ": calculations begin" << endl;
 	}
 
-	//определяем количество точек для каждого процесса
+	// Определяем количество точек для каждого процесса
 	N_PerProcess = M / ProcNum;
 	N_Add = M % ProcNum;
 
 	if (ProcRank < N_Add) {
 		N_PerProcess++;
-		//определяем номер элеманта, с которого начнутся вычисления этого процесса
+		// Определяем номер элеманта, с которого начнутся вычисления этого процесса
 		FirstX = N_PerProcess * ProcRank;
 	}
 	else {
@@ -109,18 +114,27 @@ int main(int argc, char* argv[]) {
 
 	double** data = new_matrix<double>(K, N_PerProcess);
 
+	// cout << "START RANK = " << ProcRank << endl;
+	
+	// for (int iy = 0; iy < K; ++iy) {
+	// 	cout << ProcRank << " - " ;
+	// 		for (int ix = 0; ix < N_PerProcess; ++ix) {
+	// 			cout << setw(15) << data[iy][ix] << " ";
+	// 		}
+	// 		cout << endl;
+	// 	}
+	// cout << "END RANK =" << ProcRank << endl ;
+	// cout <<"START CALCULATIONS IN RANK =" << ProcRank << endl ;
+	
 	// Процесс вычисляет свою часть значений в 1ой строке
 	for (int n = 0; n < N_PerProcess; ++n) data[0][n] = phi((n + FirstX) * h);
 
 	// Обмен данными для полноценного заполнения первой строки
 	data_send(data, status, ProcNum, ProcRank, N_PerProcess, 0);
-
-	// Получение  значения 1ой строки
-	pair<double, double> data_recv = data_recive(data, status, ProcNum, ProcRank, N_PerProcess, 0);
 	
-	// Заполнение середины 2ой строки (также по частям)
-	for (int n = 1; n < N_PerProcess - 1; ++n) data[1][n] = solve_bottom(data[0][n - 1], data[0][n + 1], f(tau, (FirstX + n) * h));
-
+	// Получение  значения 1ой строки
+	pair<double, double> data_recv = data_recive(status, ProcNum, ProcRank, N_PerProcess, 0);
+	
 	// Определение первого значения (своей группы) в 2ой строке
 	if (ProcRank == 0)
 		data[1][0] = ksi(tau);
@@ -133,28 +147,35 @@ int main(int argc, char* argv[]) {
 	else
 		data[1][N_PerProcess - 1] = solve_bottom(data[0][N_PerProcess - 2], data_recv.second, f(tau, h * (FirstX + N_PerProcess - 1)));
 
+	// Заполнение середины 2ой строки (также по частям)
+	for (int n = 1; n < N_PerProcess - 1; ++n) data[1][n] = solve_bottom(data[0][n - 1], data[0][n + 1], f(tau, (FirstX + n) * h));
+
 	// Отступили от края - можно считать для всех остальных
 	for (int k = 2; k < K; ++k) {
 		
 		// Пересылка данных
 		data_send(data, status, ProcNum, ProcRank, N_PerProcess, k - 1);
 
-		// Значения в середине
-		for (int n = 1; n < N_PerProcess - 1; ++n) data[k][n] = solve(data[k - 1][n - 1], data[k - 2][n], data[k - 1][n + 1], f(k * tau, (FirstX + n) * h));
-
 		// Получение данных
-		pair<double, double> data_recv = data_recive(data, status, ProcNum, ProcRank, N_PerProcess, k - 1);
+		pair<double, double> data_recv = data_recive(status, ProcNum, ProcRank, N_PerProcess, k - 1);
 
 		// Граничное условие слева
 		if (ProcRank == 0) data[k][0] = ksi(k * tau);
-		else data[k][0] = solve(data_recv.first, data[k - 2][0], data[k - 1][1], f(k * tau, FirstX));
+		else data[k][0] = solve_bottom(data_recv.first, data[k-1][1], f(k*tau, FirstX * h));
+		//else data[k][0] = solve(data_recv.first, data[k - 1][1], data[k - 2][0], f(k * tau, FirstX));
 
 		// Граничное условие справа 
 		if (ProcRank == ProcNum - 1) data[k][N_PerProcess - 1] = solve_right(data[k - 1][N_PerProcess - 2], data[k - 1][N_PerProcess - 1], f(k * tau, (FirstX + N_PerProcess - 1) * h));
-		else data[k][N_PerProcess - 1] = solve(data[k - 1][N_PerProcess - 2], data[k - 2][N_PerProcess - 1], data_recv.second, f(k * tau, (FirstX + N_PerProcess - 1) * h));
+		else data[k][N_PerProcess - 1] = solve_bottom(data[k-1][N_PerProcess - 2],data_recv.second, f(k*tau, (FirstX + N_PerProcess - 1) * h));
+		//else data[k][N_PerProcess - 1] = solve(data[k - 1][N_PerProcess - 2], data_recv.second, data[k - 2][N_PerProcess - 1], f(k * tau, (FirstX + N_PerProcess - 1) * h));
+
+		// Значения в середине
+		for (int n = 1; n < N_PerProcess - 1; ++n) data[k][n] = solve_bottom(data[k-1][n-1], data[k-1][n+1], f(k*tau, (FirstX + n) * h));
+		//data[k][n] = solve(data[k - 1][n - 1], data[k - 1][n + 1], data[k - 2][n], f(k * tau, (FirstX + n) * h));
+	
 	}
 
-	//Сбор посчитанных данных в процесс 0
+	// Сбор посчитанных данных в процесс 0
 	if (ProcRank != 0) {
 		double* reviving_data = new double[N_PerProcess * K];
 
@@ -169,7 +190,7 @@ int main(int argc, char* argv[]) {
 		// Отправление данных
 		MPI_Send(reviving_data, N_PerProcess * K * sizeof(double), MPI_BYTE, 0, 1, MPI_COMM_WORLD);
 
-		cout << "From process " << ProcRank << ": data sended to process 0 succesfully " << endl;
+		// cout << "From process " << ProcRank << ": data sended to process 0 succesfully " << endl;
 
 		delete[] reviving_data;
 	}
@@ -194,7 +215,7 @@ int main(int argc, char* argv[]) {
 			double* reciving_data = new double[rec_N_PerProcess * K];
 			MPI_Recv(reciving_data, rec_N_PerProcess * K * sizeof(double), MPI_BYTE, i, 1, MPI_COMM_WORLD, &status);
 
-			cout << "From process " << ProcRank << ": data recived from process  " << i << " succesfully" << endl;
+			// cout << "From process " << ProcRank << ": data recived from process  " << i << " succesfully" << endl;
 
 			for (int iy = 0; iy < K; ++iy)
 				for (int ix = 0; ix < rec_N_PerProcess; ++ix)
@@ -210,15 +231,26 @@ int main(int argc, char* argv[]) {
 		cout << endl <<  "Final data: "  << endl << endl;
 
 		cout << fixed;
-		cout.precision(2);
+		cout.precision(3);
 
-		// Вывод рассчитанных данных
+		//Вывод рассчитанных данных
 		for (int iy = 0; iy < K; ++iy) {
 			for (int ix = 0; ix < M; ++ix) {
-				cout << setw(10) << finale_data[iy][ix] << " ";
+				cout << setw(6) << finale_data[iy][ix] << " ";
 			}
 			cout << endl;
 		}
+
+		ofstream out;
+		char file_name[] = "/Users/julproh/development/6_semester/Parallel computing/Lab1/out.txt";
+		out.open(file_name);
+		for (int iy = 0; iy < K; ++iy) {
+			for (int ix = 0; ix < M; ++ix) {
+				out << finale_data[iy][ix] << " ";
+			}
+			out << endl;
+		}
+		out.close();
 
 		delete_matrix<double>(finale_data, K);
 	}
@@ -230,7 +262,7 @@ int main(int argc, char* argv[]) {
 	return 0;
 }
 
-//отправкка данных
+// Отправкка данных
 void data_send(double** data, MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k) {
 	
 	double send_right, send_left;
@@ -241,22 +273,23 @@ void data_send(double** data, MPI_Status& status, int ProcNum, int ProcRank, int
 	}
 	else if (ProcRank == ProcNum - 1) {
 		send_left = data[k][0];
-		MPI_Send(&send_left, sizeof(send_left), MPI_BYTE, ProcRank - 1, 1, MPI_COMM_WORLD);
+		MPI_Send(&send_left, sizeof(send_left), MPI_BYTE, ProcRank - 1, 2, MPI_COMM_WORLD);
 	}
 	else {
 		send_right = data[k][N_PerProcess - 1];
 		MPI_Send(&send_right, sizeof(send_right), MPI_BYTE, ProcRank + 1, 1, MPI_COMM_WORLD);
 		send_left = data[k][0];
-		MPI_Send(&send_left, sizeof(send_left), MPI_BYTE, ProcRank - 1, 1, MPI_COMM_WORLD);
+		MPI_Send(&send_left, sizeof(send_left), MPI_BYTE, ProcRank - 1, 2, MPI_COMM_WORLD);
 	}
 }
 
-//прием данных
-pair<double, double> data_recive(double** data, MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k) {
+// Прием данных
+pair<double, double> data_recive(MPI_Status& status, int ProcNum, int ProcRank, int N_PerProcess, int k) {
+	
 	double recv_right, recv_left;
 
 	if (ProcRank == 0) {
-		MPI_Recv(&recv_right, sizeof(recv_right), MPI_BYTE, 1, 1, MPI_COMM_WORLD, &status);
+		MPI_Recv(&recv_right, sizeof(recv_right), MPI_BYTE, 1, 2, MPI_COMM_WORLD, &status);
 		recv_left = 0;
 	}
 	else if (ProcRank == ProcNum - 1) {
@@ -264,9 +297,12 @@ pair<double, double> data_recive(double** data, MPI_Status& status, int ProcNum,
 		recv_right = 0;
 	}
 	else {
-		MPI_Recv(&recv_right, sizeof(recv_right), MPI_BYTE, ProcRank + 1, 1, MPI_COMM_WORLD, &status);
+		MPI_Recv(&recv_right, sizeof(recv_right), MPI_BYTE, ProcRank + 1, 2, MPI_COMM_WORLD, &status);
 		MPI_Recv(&recv_left, sizeof(recv_left), MPI_BYTE, ProcRank - 1, 1, MPI_COMM_WORLD, &status);
 	}
 
 	return pair<double, double>(recv_left, recv_right);
 }
+
+// mpicxx 1.cpp -o 1  
+// mpirun  -np 8 1              

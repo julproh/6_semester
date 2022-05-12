@@ -2,5 +2,23 @@
 /HarmonicSeries/Series_
 .vscode
 .gitignore
-/Птуха
 */*.DS_Store
+/Trash
+/Lab1/1_2.cpp
+/Lab1/1.log
+/Lab1/1.fls
+/Lab1/1.aux
+/Lab1/1.toc
+/Lab1/1.synctex.gz
+/Lab1/1.fdb_latexmk
+/Lab1/lab1_task2.cpp
+../../.DS_Store
+../../Computational mathematics/Transport equation/
+../../English/.DS_Store
+plotter.py
+../../resume.pdf
+/Lab2/2_.cpp
+../../.DS_Store
+../../Computational mathematics/Lax-Wendroff/
+../../Computational mathematics/Transport equation/
+../../English/.DS_Store
