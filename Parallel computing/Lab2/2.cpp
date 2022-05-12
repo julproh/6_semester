@@ -13,7 +13,7 @@
 using namespace std;
 
 //Определяем количество потоков
-#define NUM_THREADS 4
+#define NUM_THREADS 8
 
 //Точное значение интеграла
 #define _VALUE 0.504066 
@@ -140,7 +140,7 @@ double* balanced_inside(double a, double b, double eps, double* step, int thread
 	}
 	double* points = (double*) calloc (thread_num+1, sizeof(double));
 
-	cout << "Точки: ";
+	cout << endl << "Точки: ";
 	for(int i = 0; i <= thread_num; i++)
 	{
 		points[i] = a + i * (b - a)/thread_num;
